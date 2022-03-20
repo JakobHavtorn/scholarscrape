@@ -1,1 +1,5 @@
+black
+dataclass-wizard
 requests
+tenacity
+typing-extensions
