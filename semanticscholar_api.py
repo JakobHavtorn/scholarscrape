@@ -712,6 +712,6 @@ if __name__ == "__main__":
         i_index_corrected = f"i10_corrected={df.i10_index_without_self_cites.item():<3d}"
         s_index =  f"s={df.s_index.item():<3d}"
         ps_index = f"ps={df.ps_index.item():<3d}"
-        scf = f"scf={df.self_cite_ratio.item():5.3f}"
-        pscf = f"pscf={df.pseudo_self_cite_ratio.item():5.3f}"
-        rich.print(f"{name:<30s} {cites} {self_cites} {pseudo_self_cites} {h_index} {h_index_corrected} {i_index} {i_index_corrected} {s_index} {ps_index} {scf} {pscf}")
+        scr = f"scr={df.self_cite_ratio.item():5.3f}"
+        pscr = f"pscr={df.pseudo_self_cite_ratio.item():5.3f}"
+        rich.print(f"{name:<30s} {cites} {self_cites} {pseudo_self_cites} {h_index} {h_index_corrected} {i_index} {i_index_corrected} {s_index} {ps_index} {scr} {pscr}")
