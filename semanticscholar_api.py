@@ -650,19 +650,6 @@ def compute_i_k_index(citations: List[int], k: int = 10):
     return i_k_index
 
 
-def compute_h_index_without_self_cites(author_id: str, ss: SemanticScholarAPI = None):
-    """Subtract self cites from citation count of each paper and then compute h-index."""
-    if ss is None:
-        ss = SemanticScholarAPI()  # default
-
-
-def concat_paper_dfs(paper_dfs: List[pd.DataFrame], author_ids: List[str]) -> pd.DataFrame:
-    """Concatenate multiple paper dataframes."""
-    for author_id, df in zip(author_ids, paper_dfs):
-        df["author_id"] = author_id
-    return pd.concat(paper_dfs)
-
-
 def handle_author(author_id: str, ss: SemanticScholarAPI = None):
     """Request author info from API and dump results to disk. Read from disk if avaiable and less than a week old."""
     author_dir = os.path.join(DATA_DIR, f"{author_id}_author.pkl")
@@ -704,8 +691,8 @@ if __name__ == "__main__":
 
     for name, df in author_df.items():
         cites = f"citations={df.citation_count.item():<5d}"
-        self_cites = f"SC={df.self_cites.item():<5d}"
-        pseudo_self_cites = f"SC={df.pseudo_self_cites.item():<5d}"
+        self_cites = f"sc={df.self_cites.item():<5d}"
+        pseudo_self_cites = f"psc={df.pseudo_self_cites.item():<5d}"
         h_index = f"h={df.h_index.item():<3d}"
         h_index_corrected = f"h_corrected={df.h_index_without_self_cites.item():<3d}"
         i_index = f"i10={df.i10_index.item():<3d}"
