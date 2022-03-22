@@ -11,7 +11,7 @@ pip install --upgrade --editable .
 ## Run
 You can look up a single author by inputting their name
 ```bash
-python --authors "Firstname Middlename Lastname""
+python --authors "Firstname Middlename Lastname"
 ```
 
 You can also input several authors and they will all be looked up.
