@@ -17,7 +17,7 @@ import numpy as np
 
 from tqdm import tqdm
 
-from . import semanticscholar_api as ssapi
+from scholarscrape import semanticscholar_api as ssapi
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)7s %(thread)d | %(message)s")
@@ -49,15 +49,16 @@ class SemanticCrawler:
         self.priority_key = priority_key
         self.api = ssapi.SemanticScholarAPI(timeout, api_key, api_url)
         self.in_queue = PriorityQueue()  # prioritize authors by citation count to get the most bang for the buck
+        raise NotImplementedError()
 
     def submit_author(self, author_id):
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def submit_paper(self, paper_id: str):
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def work(self):
-        raise NotImplementedError
+        raise NotImplementedError()
 
 
 def papers2df(papers: List[ssapi.Paper]):
@@ -177,10 +178,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Compute self citation counts for Semantic Scholar authors.")
     parser.add_argument("--authors", type=str, nargs="+", help="Author names to search for.")
+    parser.add_argument("--num_threads", default=25, type=int, help="Number of threads for concurrent requests.")
 
     args = parser.parse_args()
 
-    ss = ssapi.SemanticScholarAPI()
+    ss = ssapi.SemanticScholarAPI(num_threads=args.num_threads)
 
     LOGGER.info("Searching for authors...")
     authors = [ss.author_search(author_name, fields=ssapi.FIELDS_AUTHOR_BASIC) for author_name in args.authors]

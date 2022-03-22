@@ -19,12 +19,12 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from typing import Callable, Dict, List, Optional, Union
-from tenacity import retry, wait_fixed, retry_if_exception_type, stop_after_attempt
 
 import requests
 
-from tqdm import tqdm
 from dataclass_wizard import JSONWizard
+from tenacity import retry, wait_fixed, retry_if_exception_type, stop_after_attempt
+from tqdm import tqdm
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)7s %(thread)d | %(message)s")
@@ -97,12 +97,11 @@ class APIError(Exception):
 
     def __init__(self, response: requests.Response):
         error_code = response.status_code
-        url = response.url
         data = response.json()
         error_msg = ", ".join((f"{key}: {value}" for key, value in data.items()))
         if not error_msg:
             error_msg = "No error message provided"
-        error_message = f"HTTP {error_code} for request {url}: {error_msg}"
+        error_message = f"HTTP {error_code}: {error_msg}"
         super().__init__(error_message)
 
 
@@ -183,12 +182,13 @@ def get_and_parse(url: str, params: dict = None, headers: dict = None, timeout: 
 @dataclass
 class BaseContainer(JSONWizard):
     """BaseContainer is a base data container that is used to hold and parse data returned by the Semantic Scholar API.
-    
+
     Using `BaseContainer.from_dict(data)` where `data = request.json()` will parse the `data` dictionary and return the
     corresponding dataclass container object.
-    
+
     We define specific dataclasses for the different endpoints below. Some return `data` is shared between endpoints.
     """
+
     def __repr__(self):
         kvs = [f"{k}={self[k]}" for k in self.__dataclass_fields__ if self[k] is not None]
         return f"{self.__class__.__name__}({kvs})"
@@ -200,6 +200,7 @@ class BaseContainer(JSONWizard):
 @dataclass
 class PaperEmbedding(BaseContainer):
     """Vector-space embedding of a paper."""
+
     model: str
     vector: List[float]
 
@@ -207,6 +208,7 @@ class PaperEmbedding(BaseContainer):
 @dataclass
 class PaperTLDR(BaseContainer):
     """Model-generated TLDR summary of a paper."""
+
     model: str
     text: str
 
@@ -214,6 +216,7 @@ class PaperTLDR(BaseContainer):
 @dataclass
 class PaperWithoutCitations(BaseContainer):
     """A paper without citations (can be used recursively within `Paper`)."""
+
     paper_id: str  # Always included
     url: str = None
     title: str = None  # Included if no fields are specified
@@ -225,6 +228,7 @@ class PaperWithoutCitations(BaseContainer):
 @dataclass
 class Paper(BaseContainer):
     """A full paper with citations and references."""
+
     paper_id: str  # Always included
     external_ids: Dict[str, str] = None
     url: str = None
@@ -252,6 +256,7 @@ class Paper(BaseContainer):
 @dataclass
 class Citation(BaseContainer):
     """A citation of a paper by the given paper. Returned by `PAPER_CITATIONS` endpoint."""
+
     citing_paper: Paper  # The citing paper
     contexts: List[str] = None  # List of sentences in which the citation(s) were made.
     intents: List[str] = None
@@ -261,6 +266,7 @@ class Citation(BaseContainer):
 @dataclass
 class Reference(BaseContainer):
     """A reference from the given paper to a paper. Returned by `PAPER_REFERENCES` endpoint."""
+
     contexts: List[str]  # List of sentences in which the citation(s) were made.
     intents: List[str]
     is_influential: bool  # Did the cited paper have a significant impact on the citing paper?
@@ -270,6 +276,7 @@ class Reference(BaseContainer):
 @dataclass
 class AuthorWithoutPapers(BaseContainer):
     """An author without papers (can be used recursively within `Author`)."""
+
     author_id: str
     name: str = None
     external_ids: str = None
@@ -285,12 +292,14 @@ class AuthorWithoutPapers(BaseContainer):
 @dataclass
 class Author(AuthorWithoutPapers):
     """An author with papers."""
+
     papers: List[Paper] = None
 
 
 @dataclass
 class Batch(BaseContainer):
     """A batch of Papers, Authors, Citations or References. Returned by any batched endpoint."""
+
     data: Union[List[Author], List[Paper], List[Citation], List[Reference]]  # list of objects returned in this batch.
     offset: int = None  # starting index for this batch. Required.
     next: int = None  # starting index for next batch. Missing if no more data exists.
@@ -448,19 +457,20 @@ def paper_references(
 
 class SemanticScholarAPI:
     """Class that facilitates interacting with the SemanticsScholar API.
-    
+
     Non-partners are limited to 100 queries per 5 minutes. Will automatically keep retrying until whitelisted again.
     """
+
     DEFAULT_API_URL = API_URL
     DEFAULT_PARTNER_API_URL = PARTNER_API_URL
 
-    def __init__(self, timeout: int = REQUEST_TIMEOUT, api_key: str = None, api_url: str = None):
+    def __init__(self, num_threads: int = 10, timeout: int = REQUEST_TIMEOUT, api_key: str = None, api_url: str = None):
         self.timeout = timeout
         self.api_url = api_url if api_url else self.DEFAULT_API_URL
         self.auth_header = {"x-api-key": api_key} if api_key else {}
         self.kwargs = dict(api_url=self.api_url, timeout=timeout, headers=self.auth_header)
 
-        self.executor = ThreadPoolExecutor(max_workers=100)
+        self.executor = ThreadPoolExecutor(max_workers=num_threads)
 
         self.author_search = partial(author_search, **self.kwargs)
         self.author_details = partial(author_details, **self.kwargs)
@@ -502,7 +512,7 @@ class SemanticScholarAPI:
         """
         if isinstance(queries_or_ids, str):
             queries_or_ids = [queries_or_ids]
-        
+
         if progressbar:
             desc = kwargs.pop("desc", f"{endpoint.__name__}")
             pbar = partial(tqdm, desc=desc)
