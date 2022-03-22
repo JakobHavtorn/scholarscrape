@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 
 from dataclasses import dataclass
 from functools import partial
+import time
 from typing import Callable, Dict, List, Optional, Union
 from tenacity import retry, wait_fixed, retry_if_exception_type, stop_after_attempt
 
@@ -93,6 +95,7 @@ def camel2snake(txt: str) -> str:
 
 
 def to_params(fields: List[str] = None, offset: int = None, limit: int = None, **kwargs) -> Dict[str, str]:
+    """Form parameters dictionary for API get requests. See https://api.semanticscholar.org/graph/v1."""
     params = dict()
     if fields:
         params["fields"] = ",".join(fields)
@@ -131,7 +134,7 @@ class TooManyRequests(APIError):
 
 
 class Non200Warning(APIError):
-    """Non-200 HTTP response"""
+    """Non-errror non-200 HTTP response"""
 
 
 @retry(
@@ -194,6 +197,13 @@ def get_and_parse(url: str, params: dict = None, headers: dict = None, timeout: 
 
 @dataclass
 class BaseContainer(JSONWizard):
+    """BaseContainer is a base data container that is used to hold and parse data returned by the Semantic Scholar API.
+    
+    Using `BaseContainer.from_dict(data)` where `data = request.json()` will parse the `data` dictionary and return the
+    corresponding dataclass container object.
+    
+    We define specific dataclasses for the different endpoints below. Some return `data` is shared between endpoints.
+    """
     def __repr__(self):
         kvs = [f"{k}={self[k]}" for k in self.__dataclass_fields__ if self[k] is not None]
         return f"{self.__class__.__name__}({kvs})"
@@ -204,18 +214,21 @@ class BaseContainer(JSONWizard):
 
 @dataclass
 class PaperEmbedding(BaseContainer):
+    """Vector-space embedding of a paper."""
     model: str
     vector: List[float]
 
 
 @dataclass
 class PaperTLDR(BaseContainer):
+    """Model-generated TLDR summary of a paper."""
     model: str
     text: str
 
 
 @dataclass
 class PaperWithoutCitations(BaseContainer):
+    """A paper without citations (can be used recursively within `Paper`)."""
     paper_id: str  # Always included
     url: str = None
     title: str = None  # Included if no fields are specified
@@ -226,6 +239,7 @@ class PaperWithoutCitations(BaseContainer):
 
 @dataclass
 class Paper(BaseContainer):
+    """A full paper with citations and references."""
     paper_id: str  # Always included
     external_ids: Dict[str, str] = None
     url: str = None
@@ -252,6 +266,7 @@ class Paper(BaseContainer):
 
 @dataclass
 class Citation(BaseContainer):
+    """A citation of a paper by the given paper. Returned by `PAPER_CITATIONS` endpoint."""
     citing_paper: Paper  # The citing paper
     contexts: List[str] = None  # List of sentences in which the citation(s) were made.
     intents: List[str] = None
@@ -260,6 +275,7 @@ class Citation(BaseContainer):
 
 @dataclass
 class Reference(BaseContainer):
+    """A reference from the given paper to a paper. Returned by `PAPER_REFERENCES` endpoint."""
     contexts: List[str]  # List of sentences in which the citation(s) were made.
     intents: List[str]
     is_influential: bool  # Did the cited paper have a significant impact on the citing paper?
@@ -268,6 +284,7 @@ class Reference(BaseContainer):
 
 @dataclass
 class AuthorWithoutPapers(BaseContainer):
+    """An author without papers (can be used recursively within `Author`)."""
     author_id: str
     name: str = None
     external_ids: str = None
@@ -282,11 +299,13 @@ class AuthorWithoutPapers(BaseContainer):
 
 @dataclass
 class Author(AuthorWithoutPapers):
+    """An author with papers."""
     papers: List[Paper] = None
 
 
 @dataclass
 class Batch(BaseContainer):
+    """A batch of Papers, Authors, Citations or References. Returned by any batched endpoint."""
     data: Union[List[Author], List[Paper], List[Citation], List[Reference]]  # list of objects returned in this batch.
     offset: int = None  # starting index for this batch. Required.
     next: int = None  # starting index for next batch. Missing if no more data exists.
@@ -314,7 +333,7 @@ class ReferenceBatch(Batch):
 
 
 def query_exhaustively(
-    method: Callable,
+    endpoint: Callable,
     query_or_id: str,
     fields: Dict[str, str] = None,
     offset: int = None,
@@ -322,12 +341,12 @@ def query_exhaustively(
     api_url: str = API_URL,
     **kwargs,
 ) -> Union[List[Author], List[Paper], List[Citation], List[Reference]]:
-    """Iterate over batches of results from the API."""
-    batch = method(query_or_id, fields, offset, limit, api_url, **kwargs)
+    """Keep requesting the `endpoint` with `query_or_id` and return the concatenated `Batch.data`."""
+    batch = endpoint(query_or_id, fields, offset, limit, api_url, **kwargs)
     data = batch.data
     while batch.next is not None:
         offset = batch.next
-        batch = method(query_or_id, fields, offset, limit, api_url, **kwargs)
+        batch = endpoint(query_or_id, fields, offset, limit, api_url, **kwargs)
         data.extend(batch.data)
     return data
 
@@ -443,6 +462,10 @@ def paper_references(
 
 
 class SemanticScholarAPI:
+    """Class that facilitates interacting with the SemanticsScholar API.
+    
+    Non-partners are limited to 100 queries per 5 minutes. Will automatically keep retrying until whitelisted again.
+    """
     DEFAULT_API_URL = API_URL
     DEFAULT_PARTNER_API_URL = PARTNER_API_URL
 
@@ -461,8 +484,8 @@ class SemanticScholarAPI:
         self.author_search_batch = partial(author_search_batch, **self.kwargs)
         self.author_papers_batch = partial(author_papers_batch, **self.kwargs)
 
-        self.author_search_threaded = partial(self.threaded_requests, author_search)
-        self.author_papers_threaded = partial(self.threaded_requests, author_papers)
+        self.author_search_threaded = partial(self.argument_parallel_requests, author_search)
+        self.author_papers_threaded = partial(self.argument_parallel_requests, author_papers)
 
         self.paper_search = partial(paper_search, **self.kwargs)
         self.paper_details = partial(paper_details, **self.kwargs)
@@ -475,30 +498,33 @@ class SemanticScholarAPI:
         self.paper_citations_batch = partial(paper_citations_batch, **self.kwargs)
         self.paper_references_batch = partial(paper_references_batch, **self.kwargs)
 
-        self.paper_search_threaded = partial(self.threaded_requests, paper_search)
-        self.paper_authors_threaded = partial(self.threaded_requests, paper_authors)
-        self.paper_citations_threaded = partial(self.threaded_requests, paper_citations)
-        self.paper_references_threaded = partial(self.threaded_requests, paper_references)
+        self.paper_search_threaded = partial(self.argument_parallel_requests, paper_search)
+        self.paper_authors_threaded = partial(self.argument_parallel_requests, paper_authors)
+        self.paper_citations_threaded = partial(self.argument_parallel_requests, paper_citations)
+        self.paper_references_threaded = partial(self.argument_parallel_requests, paper_references)
 
-    def threaded_requests(
+    def argument_parallel_requests(
         self,
-        method: Callable,
+        endpoint: Callable,
         queries_or_ids: Union[str, List[str]],
         fields: List[str],
         progressbar: bool = True,
         **kwargs,
     ) -> Union[List[List[Author]], List[List[Paper]], List[List[Citation]], List[List[Reference]]]:
-        """Submit many queries or author/paper ids to the API to be executed concurrently. Returns in given order."""
+        """Submit many `queries_or_ids` arguments to the API `endpoint` to be executed concurrently.
+
+        The return values are in the same order as `queries_or_ids`.
+        """
         if isinstance(queries_or_ids, str):
             queries_or_ids = [queries_or_ids]
         
         if progressbar:
-            desc = kwargs.pop("desc", f"{method.__name__}")
+            desc = kwargs.pop("desc", f"{endpoint.__name__}")
             pbar = partial(tqdm, desc=desc)
         else:
             pbar = lambda x: x
 
-        futures = [self.executor.submit(method, qid, fields, **self.kwargs, **kwargs) for qid in queries_or_ids]
+        futures = [self.executor.submit(endpoint, qid, fields, **self.kwargs, **kwargs) for qid in queries_or_ids]
         results = [future.result() for future in pbar(futures)]
         return results
 
@@ -518,10 +544,19 @@ class SemanticCrawler:
         api_key: str = None,
         api_url: str = None,
     ):
-        self.api = SemanticScholarAPI(timeout, api_key, api_url)
         self.search_seeds = search_seeds
-
+        self.priority_key = priority_key
+        self.api = SemanticScholarAPI(timeout, api_key, api_url)
         self.in_queue = PriorityQueue()  # prioritize authors by citation count to get the most bang for the buck
+
+    def submit_author(self, author_id):
+        raise NotImplementedError
+
+    def submit_paper(self, paper_id: str):
+        raise NotImplementedError
+
+    def work(self):
+        raise NotImplementedError
 
 
 def papers2df(papers: List[Paper]):
@@ -624,8 +659,23 @@ def concat_paper_dfs(paper_dfs: List[pd.DataFrame], author_ids: List[str]) -> pd
     return pd.concat(paper_dfs)
 
 
+def handle_author(author_id: str, ss: SemanticScholarAPI = None):
+    author_dir = f"./data/{author_id}_author.csv"
+    papers_dir = f"./data/{author_id}_papers_dir.csv"
+    if os.path.exists(author_dir) and os.path.exists(papers_dir) and \
+       time.time() - os.path.getmtime(author_dir) < 60 * 60 * 24 * 7:
+        LOGGER.info(f"Skipping {author_id} since fresh data is available on disk.")
+        return pd.read_csv(author_dir), pd.read_csv(papers_dir)
+    else:
+        LOGGER.info(f"Requesting data for author {author_id} from API.")
+        author_df, papers_df = compute_self_citation_count(author.author_id, ss=ss)
+
+    author_df.to_csv(author_dir)
+    papers_df.to_csv(papers_df)
+    return author_df, papers_df
+
+
 if __name__ == "__main__":
-    # python semanticscholar_api.py --authors "Lasse Borgholt" "Jakob D. Havtorn" "Joakim Edin" "Lars Maaløe" "Jes Frellsen" "Søren Hauberg" "Christian Igel" "Bjorn W. Schuller" 
     parser = argparse.ArgumentParser(description="Compute self citation counts for Semantic Scholar authors.")
     parser.add_argument("--authors", type=str, nargs="+", help="Author names to search for.")
 
@@ -640,12 +690,10 @@ if __name__ == "__main__":
     LOGGER.info(f"Found authors:")
     rich.print(authors)
 
-    # TODO Dump results to disk and read those if run again within the last week or so.
-
     author_df = dict()
     papers_df = dict()
     for author in authors:
-        author_df[author.name], papers_df[author.name] = compute_self_citation_count(author.author_id, ss=ss)
+        author_df[author.name], papers_df[author.name] = handle_author(author.author_id, ss=ss)
 
     for name, df in author_df.items():
         scf = f"SCF={df.self_cite_factor.item():5.3f}"
