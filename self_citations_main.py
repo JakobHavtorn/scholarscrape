@@ -68,7 +68,7 @@ def papers2df(papers: List[ssapi.Paper]):
     return papers_df
 
 
-def authors2df(authors: List[ssapi.Author]):
+def author2df(author: ssapi.Author):
     author_dict = author.to_dict()
     author_dict.pop("papers")
     author_df = pd.DataFrame([author_dict])
@@ -80,7 +80,7 @@ def get_author_details(author_id: str, ss: ssapi.SemanticScholarAPI):
     fields = [f"papers.{f}" for f in ssapi.FIELDS_PAPER_BASIC] + ssapi.FIELDS_AUTHOR_BASIC
     author = ss.author_details(author_id, fields=fields)
     papers_df = papers2df(author.papers)
-    author_df = authors2df(author)
+    author_df = author2df(author)
     return author, author_df, papers_df
 
 
@@ -166,7 +166,7 @@ def handle_author(author_id: str, ss: ssapi.SemanticScholarAPI = None):
         return pd.read_pickle(author_dir), pd.read_pickle(papers_dir)
     else:
         LOGGER.info(f"Requesting data for author {author_id} from API.")
-        author_df, papers_df = compute_self_citation_count(author.author_id, ss=ss)
+        author_df, papers_df = compute_self_citation_count(author_id, ss=ss)
 
     author_df.to_pickle(author_dir)
     papers_df.to_pickle(papers_dir)
@@ -177,7 +177,8 @@ if __name__ == "__main__":
     os.makedirs(f"{DATA_DIR}", exist_ok=True)
 
     parser = argparse.ArgumentParser(description="Compute self citation counts for Semantic Scholar authors.")
-    parser.add_argument("--authors", type=str, nargs="+", help="Author names to search for.")
+    parser.add_argument("--authors", type=str, nargs="+", default=[], help="Author names to search for.")
+    parser.add_argument("--author_ids", type=str, nargs="+", default=[], help="Author ids to search for.")
     parser.add_argument("--num_threads", default=25, type=int, help="Number of threads for concurrent requests.")
 
     args = parser.parse_args()
@@ -188,15 +189,17 @@ if __name__ == "__main__":
     authors = [ss.author_search(author_name, fields=ssapi.FIELDS_AUTHOR_BASIC) for author_name in args.authors]
     authors = [sorted(results, key=lambda a: a.citation_count, reverse=True) for results in authors]
     authors = [authors_[0] for authors_ in authors]
+    authors += [ssapi.Author(author_id) for author_id in args.author_ids]  # add author ids
     LOGGER.info(f"Found authors:")
     rich.print(authors)
 
     author_df = dict()
     papers_df = dict()
     for author in authors:
-        author_df[author.name], papers_df[author.name] = handle_author(author.author_id, ss=ss)
+        author_df[author.author_id], papers_df[author.author_id] = handle_author(author.author_id, ss=ss)
 
-    for name, df in author_df.items():
+    for author_id, df in author_df.items():
+        name = df.name.values[0] + f" ({author_id})"
         cites = f"citations={df.citation_count.item():<5d}"
         self_cites = f"sc={df.self_cites.item():<5d}"
         pseudo_self_cites = f"psc={df.pseudo_self_cites.item():<5d}"
